@@ -35,5 +35,6 @@ from . import (
     transformations,
 )
 
+print('Loading custom textattack...')
 
 name = "textattack"

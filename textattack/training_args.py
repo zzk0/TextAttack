@@ -116,6 +116,7 @@ class TrainingArgs:
     log_to_wandb: bool = False
     wandb_project: str = "textattack"
     logging_interval_step: int = 1
+    lightseq_enable: bool = False
 
     def __post_init__(self):
         assert self.num_epochs > 0, "`num_epochs` must be greater than 0."
@@ -322,6 +323,12 @@ class TrainingArgs:
             type=int,
             default=default_obj.logging_interval_step,
             help="Log to Tensorboard/Wandb every N steps.",
+        )
+        parser.add_argument(
+            "--lightseq-enable",
+            type=bool,
+            default=default_obj.lightseq_enable,
+            help="Enable LightSeq or not",
         )
 
         return parser

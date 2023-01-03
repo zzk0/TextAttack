@@ -242,7 +242,7 @@ class Trainer:
         # Name for column indicating if an example is adversarial is set as "_example_type".
         adversarial_dataset = textattack.datasets.Dataset(
             adversarial_examples,
-            input_columns=self.train_dataset.input_columns + ("_example_type",),
+            input_columns=self.train_dataset.input_columns + ["_example_type",],
             label_map=self.train_dataset.label_map,
             label_names=self.train_dataset.label_names,
             output_scale_factor=self.train_dataset.output_scale_factor,
@@ -705,6 +705,9 @@ class Trainer:
                     # only generate a new adversarial training set every self.training_args.attack_period epochs after the clean epochs
                     # adv_dataset is instance of `textattack.datasets.Dataset`
                     model.eval()
+                    torch.cuda.empty_cache()
+                    if self.training_args.lightseq_enable:
+                        self.model_wrapper.export_ls_model()
                     adv_dataset = self._generate_adversarial_examples(epoch)
                     model.train()
                     model.to(textattack.shared.utils.device)

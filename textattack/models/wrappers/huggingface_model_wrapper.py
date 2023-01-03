@@ -3,16 +3,37 @@ HuggingFace Model Wrapper
 --------------------------
 """
 
+import tempfile
 import torch
 import transformers
+import lightseq.inference as lsi
 
 import textattack
 from textattack.models.helpers import T5ForTextToText
+from textattack.models.helpers import extract_bert_weights
 from textattack.models.tokenizers import T5Tokenizer
 
 from .pytorch_model_wrapper import PyTorchModelWrapper
 
 torch.cuda.empty_cache()
+
+
+class LightseqBertClassification:
+    def __init__(self, ls_weight_path, hf_model):
+        self.ls_bert = lsi.Bert(ls_weight_path, 128)
+        self.hf_model = hf_model
+        self.hf_model.to('cuda:0')
+        self.pooler = hf_model.bert.pooler
+        self.classifier = hf_model.classifier
+
+    def infer(self, inputs, attn_mask):
+        self.hf_model.eval()
+        with torch.no_grad():
+            last_hidden_states = self.ls_bert.infer(inputs, attn_mask)
+            last_hidden_states = torch.Tensor(last_hidden_states).float()
+            pooled_output = self.pooler(last_hidden_states.to(self.hf_model.device))
+            logits = self.classifier(pooled_output)
+        return logits
 
 
 class HuggingFaceModelWrapper(PyTorchModelWrapper):
@@ -33,13 +54,10 @@ class HuggingFaceModelWrapper(PyTorchModelWrapper):
 
         self.model = model
         self.tokenizer = tokenizer
+        self.ls_model_name = None
+        self.ls_model = None
 
-    def __call__(self, text_input_list):
-        """Passes inputs to HuggingFace models as keyword arguments.
-
-        (Regular PyTorch ``nn.Module`` models typically take inputs as
-        positional arguments.)
-        """
+    def _preprocess(self, text_input_list):
         # Default max length is set to be int(1e30), so we force 512 to enable batching.
         max_length = (
             512
@@ -54,8 +72,21 @@ class HuggingFaceModelWrapper(PyTorchModelWrapper):
             truncation=True,
             return_tensors="pt",
         )
-        model_device = next(self.model.parameters()).device
-        inputs_dict.to(model_device)
+        if self.ls_model is None:
+            model_device = next(self.model.parameters()).device
+            inputs_dict.to(model_device)
+        return inputs_dict
+
+    def __call__(self, text_input_list):
+        """Passes inputs to HuggingFace models as keyword arguments.
+
+        (Regular PyTorch ``nn.Module`` models typically take inputs as
+        positional arguments.)
+        """
+        inputs_dict = self._preprocess(text_input_list)
+
+        if self.ls_model is not None:
+            return self.ls_infer(inputs_dict['input_ids'], inputs_dict['attention_mask'])
 
         with torch.no_grad():
             outputs = self.model(**inputs_dict)
@@ -70,6 +101,18 @@ class HuggingFaceModelWrapper(PyTorchModelWrapper):
             # where the first item in the tuple corresponds to the list of
             # scores for each input.
             return outputs.logits
+    
+    def export_ls_model(self):
+        """export Huggingface models to LightSeq models.
+        """
+        self.ls_model_path = tempfile.mktemp() + '.hdf5'
+        extract_bert_weights(self.model, self.ls_model_path, 12)
+        self.ls_model = LightseqBertClassification(self.ls_model_path, self.model)
+
+    def ls_infer(self, input_id, attn_mask):
+        """passes inputs to LightSeq models as keyword aruguments.
+        """
+        return self.ls_model.infer(input_id, attn_mask)
 
     def get_grad(self, text_input):
         """Get gradient of loss with respect to input tokens.
